@@ -1,11 +1,12 @@
 import os
 from sqlalchemy import select
 from src.config.database import Base, engine, Session
+from src.config.schema_init import init_schema
 from src.models.entities import User, Node, Scenario
 from src.utils.security import hash_password
 
 def seed():
-    Base.metadata.create_all(engine)
+    init_schema()
     if os.getenv('SEED_DEMO','true').lower() != 'true': return
     with Session() as db:
         for role in ('admin','operator','viewer'):

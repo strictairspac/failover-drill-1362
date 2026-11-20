@@ -2,7 +2,7 @@
 衡石数据值班组（10人）把节点巡检、故障剧本与切主证明合并为可复核演练记录。
 
 ## 业务与模块
-原流程用值班表记录节点、聊天传递故障、人工比较日志。痛点：输入版本混乱、隔离证明缺失、决策无法复查。上游是巡检记录；本工具替代人工纸上演练；下游是复核人和运维值班负责人。模块为节点状态、故障剧本、演练队列、决策证据，配套登录及JSON导出。三个实体 Node / Scenario / Drill 全链路实现。
+原流程用值班表记录节点、聊天传递故障、人工比较日志。痛点：输入版本混乱、隔离证明缺失、决策无法复查。上游是巡检记录；本工具替代人工纸上演练；下游是复核人和运维值班负责人。模块为节点状态、故障剧本、演练队列、决策证据、值班复盘汇总，配套登录及JSON导出。三个实体 Node / Scenario / Drill 全链路实现，复盘域另含更正流水、事件账本与汇总状态。
 
 **边界：受控教学/运维演练计算模型，不连接真实复制集群、不执行真实生产选主；任期、日志位置和fencing均由用户输入声明。** 本题真实 MySQL 保存业务输入/快照/结果，Python 实际计算规则，后台 worker 异步处理。
 
@@ -37,6 +37,13 @@ docker compose down --remove-orphans
 |任务|MySQL持久队列 + Redis worker互斥锁 + 心跳|
 |存储|MySQL8.0、Redis7|
 所有计算和权限检查在后端。JWT有效8小时，密码PBKDF2-SHA256 180000轮随机盐。20条待处理任务配额。审计保存业务写入动作；错误返回request-id。五服务均真实健康检查。
+
+## 复盘汇总口径
+值班复盘按通过（approved）、阻断（blocked）、失败（failed，含计算失败与未产出结果）统计演练场数。
+- **增量汇总与分批补算**：旧演练由管理员在“值班复盘”页按批（每批5场）推进，补算按演练id游标扫描，事件账本 `(drill_id, version)` 唯一约束保证中断可恢复、重试上一批不重复计数；扫到队尾且账本覆盖全部演练时**一次性切换** cutover 标记进入可查状态。
+- **查询始终查准**：切换前查询实时全量扫描已提交演练；切换后只读汇总计数并对游标之后的新演练实时合并——即使汇总落后，也能查准查询发起时已提交的场数，且永不重扫旧演练。
+- **更正与补算并发**：更正写入版本化流水并追加同 version 事件（补算事件固定 version=0），汇总增量做 delta 调整；每场演练在任一时刻只按当前裁决计一次。补算由 Redis 锁（`rollup-backfill`）串行化，Redis 不可用时降级为进程内互斥锁。
+- 接口：`GET /rollup/summary`（场数与补算进度，登录可查）、`POST /rollup/backfill`（管理员推进一批）、`POST /drills/{id}/corrections`（操作员/管理员更正裁决）、`GET /drills/{id}/corrections`（更正流水）。
 
 目录：frontend/src/api、stores、types、components/common、hooks、pages、router、utils、constants；backend/src/routes、controllers、services、models、schemas、middlewares、utils、constants、config；backend/scripts；backend/migrations。本地开发：安装backend/requirements.txt并设DATABASE_URL、REDIS_URL、JWT_SECRET，再运行uvicorn；前端以Nginx代理/api/去除前缀。
 
